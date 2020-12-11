@@ -1,8 +1,8 @@
 #include "base/abc/abc.h"
 #include "base/main/main.h"
 #include "base/main/mainInt.h"
-#include "pSat/bsat/satSolver.h"
-#include "pSat/cnf/cnf.h"
+#include "sat/bsat/satSolver.h"
+#include "sat/cnf/cnf.h"
 #include "aig/aig/aig.h"
 #include <iostream>
 #include <vector>
