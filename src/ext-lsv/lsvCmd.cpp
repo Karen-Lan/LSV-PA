@@ -1,11 +1,9 @@
 #include "base/abc/abc.h"
 #include "base/main/main.h"
 #include "base/main/mainInt.h"
-#include "sat/bsat/satSolver.h"
-#include "sat/cnf/cnf.h"
+#include "pSat/bsat/satSolver.h"
+#include "pSat/cnf/cnf.h"
 #include "aig/aig/aig.h"
-//#include "sat/bsat/satStore.h"
-//#include "sat/bsat/satVec.h"
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -15,12 +13,12 @@ using namespace std;
 static int Lsv_CommandPrintNodes(Abc_Frame_t* pAbc, int argc, char** argv);
 static int Lsv_PrintSopunate_Command(Abc_Frame_t* pAbc, int argc, char** argv);
 static int Lsv_CommandPOunate(Abc_Frame_t* pAbc, int argc, char** argv);
-static int Lsv_CommandPrintPoUnate(Abc_Frame_t* pAbc, int argc, char** argv); //
+static int Lsv_CommandPrintPounate(Abc_Frame_t *pAbc, int argc, char **argv);
 
 void init(Abc_Frame_t* pAbc) {
   Cmd_CommandAdd( pAbc, "LSV", "lsv_print_nodes", Lsv_CommandPrintNodes, 0);
   Cmd_CommandAdd( pAbc, "LSV", "lsv_print_sopunate", Lsv_PrintSopunate_Command, 0);
-  Cmd_CommandAdd(pAbc, "Print unate", "lsv_print_pounate", Lsv_CommandPrintPoUnate, 0);
+  Cmd_CommandAdd(pAbc, "LSV", "lsv_print_pounate", Lsv_CommandPrintPounate, 0);
 }
 
 void destroy(Abc_Frame_t* pAbc) {}
@@ -50,10 +48,10 @@ void Lsv_NtkPrintNodes(Abc_Ntk_t* pNtk) {
 
 int Lsv_CommandPrintNodes(Abc_Frame_t* pAbc, int argc, char** argv) {
   Abc_Ntk_t* pNtk = Abc_FrameReadNtk(pAbc);
-  int c;
+  int j;
   Extra_UtilGetoptReset();
-  while ((c = Extra_UtilGetopt(argc, argv, "h")) != EOF) {
-    switch (c) {
+  while ((j = Extra_UtilGetopt(argc, argv, "h")) != EOF) {
+    switch (j) {
       case 'h':
         goto usage;
       default:
@@ -77,7 +75,7 @@ usage:
 //=======================
 //Print_Sopunate_Command
 //=======================
-void print_pos_neg_unate(vector<Abc_Obj_t*> &pos_unate, vector<Abc_Obj_t*> &neg_unate, vector<Abc_Obj_t*> &binate);
+void print_unateness(vector<Abc_Obj_t*> &pos_unate, vector<Abc_Obj_t*> &neg_unate, vector<Abc_Obj_t*> &binate);
 bool object_id_compare (Abc_Obj_t* a, Abc_Obj_t* b) { return (Abc_ObjId(a) < Abc_ObjId(b)); }
 int Lsv_PrintSopunate_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
   Abc_Ntk_t* pNtk = Abc_FrameReadNtk(pAbc);
@@ -142,9 +140,9 @@ int Lsv_PrintSopunate_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
 
       //print
       if(Abc_SopGetPhase(pSop) == 1) 
-        print_pos_neg_unate(pos_unate, neg_unate, binate);
+        print_unateness(pos_unate, neg_unate, binate);
       else 
-        print_pos_neg_unate(neg_unate, pos_unate, binate); // Abc_SopGetPhase(pSop) == 0 --> negate
+        print_unateness(neg_unate, pos_unate, binate); // Abc_SopGetPhase(pSop) == 0 --> negate
     
 
       pos_unate.clear();
@@ -157,7 +155,7 @@ int Lsv_PrintSopunate_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
   return 0;
 }
 
-void print_pos_neg_unate(vector<Abc_Obj_t*> &pos_unate, vector<Abc_Obj_t*> &neg_unate, vector<Abc_Obj_t*> &binate) {
+void print_unateness(vector<Abc_Obj_t*> &pos_unate, vector<Abc_Obj_t*> &neg_unate, vector<Abc_Obj_t*> &binate) {
   if(pos_unate.size() != 0){
     printf("+unate inputs: ");
     for(int m = 0; m < pos_unate.size(); m++) {
@@ -291,7 +289,7 @@ Aig_Man_t * Abc_NtkToDar( Abc_Ntk_t * pNtk, int fExors, int fRegisters )
     nNodes = (Abc_NtkGetChoiceNum(pNtk) == 0)? Aig_ManCleanup( pMan ) : 0;
     if ( !fExors && nNodes )
         Abc_Print( 1, "Abc_NtkToDar(): Unexpected %d dangling nodes when converting to AIG!\n", nNodes );
-//Aig_ManDumpVerilog( pMan, "test.v" );
+//Aig_ManDumpVerilog( pMan, "test.k" );
     // save the number of registers
     if ( fRegisters )
     {
@@ -309,4 +307,160 @@ Aig_Man_t * Abc_NtkToDar( Abc_Ntk_t * pNtk, int fExors, int fRegisters )
         return NULL;
     }
     return pMan;
+}
+
+void add_po_clauses(sat_solver * pSat, Cnf_Dat_t * pCnf, Cnf_Dat_t * pCnfdup) {
+  int Lits[1], retval;
+  assert(Aig_ManCoNum(pCnf->pMan) == 1);
+
+  // f
+  Lits[0] = toLitCond(pCnf->pVarNums[Aig_ObjId(Aig_ManCo(pCnf->pMan, 0))], 0);
+  retval = sat_solver_addclause(pSat, Lits, Lits + 1);
+
+  // negate f
+  Lits[0] = toLitCond(pCnfdup->pVarNums[Aig_ObjId(Aig_ManCo(pCnf->pMan, 0))], 1);
+  retval = sat_solver_addclause(pSat, Lits, Lits + 1);
+}
+void add_pi_clauses(sat_solver * pSat, Cnf_Dat_t * pCnf, Cnf_Dat_t * pCnfdup) {
+    Aig_Obj_t *Aig_pObj;
+    int i;
+
+    sat_solver_setnvars(pSat, 2 * (pCnf->nVars) + Aig_ManCiNum(pCnf->pMan));
+    Aig_ManForEachCi(pCnf->pMan, Aig_pObj, i) {
+
+      int fvar = pCnf->pVarNums[Aig_ObjId(Aig_pObj)];
+      int fneg_var = pCnfdup->pVarNums[Aig_ObjId(Aig_pObj)];
+      int enable_var = 2 * (pCnf->nVars) + i;
+      
+      sat_solver_add_buffer_enable(pSat, fvar, fneg_var, enable_var, 0);
+    }
+}
+
+int Lsv_CommandPrintPounate(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+  Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
+
+  Abc_Obj_t *pObjPO, *pObjPI;
+  Aig_Obj_t *Aig_pObj;
+  int i, j, k;
+
+  Abc_Ntk_t *pNtkConed;
+  Aig_Man_t *pMan;
+  Cnf_Dat_t *pCnf, *pCnfdup;
+  sat_solver * pSat;
+
+  unordered_map<int, string> id2name;
+  unordered_map<string, char> name2unate;
+  vector<Abc_Obj_t *> pos_unate, neg_unate, binate;
+
+  Abc_NtkForEachPo(pNtk, pObjPO, i) {
+
+    pNtkConed = Abc_NtkCreateCone(pNtk, Abc_ObjFanin0(pObjPO), Abc_ObjName(pObjPO), 0);
+
+    if (Abc_ObjFaninC0(pObjPO))
+      Abc_NtkPo(pNtkConed, 0)->fCompl0 ^= 1;
+
+    Abc_NtkForEachPi(pNtkConed, pObjPI, j)
+    {
+      id2name[Abc_ObjId(pObjPI)] = string(Abc_ObjName(pObjPI));
+    }
+
+    pMan = Abc_NtkToDar(pNtkConed, 0, 0);
+    pCnf = Cnf_Derive(pMan, 1);
+
+    // copy cnf
+    pCnfdup = Cnf_DataDup(pCnf);
+    Cnf_DataLift(pCnfdup, pCnf->nVars);
+
+    pSat = (sat_solver *)Cnf_DataWriteIntoSolver(pCnf, 1, 0);
+
+    sat_solver_setnvars(pSat, 2 * pCnf->nVars);
+    for (int j = 0; j < pCnfdup->nClauses; ++j)
+      sat_solver_addclause(pSat, pCnfdup->pClauses[j], pCnfdup->pClauses[j + 1]);
+
+    // add po clauses
+    add_po_clauses(pSat, pCnf, pCnfdup);
+
+    //add pi clauses
+    add_pi_clauses(pSat, pCnf, pCnfdup);
+    
+    lit assumption[Aig_ManCiNum(pMan) + 2];
+
+    Aig_ManForEachCi(pMan, Aig_pObj, j) {
+
+      int fvar = pCnf->pVarNums[Aig_ObjId(Aig_pObj)];
+      int fneg_var = pCnfdup->pVarNums[Aig_ObjId(Aig_pObj)];
+
+      //positive unate test
+      //po assumption
+      assumption[0] = toLitCond(fvar, 1);
+      assumption[1] = toLitCond(fneg_var, 0);
+
+      //pi assumption
+      for (int k = 0; k < Aig_ManCiNum(pMan); ++k) {
+        int enable_var = 2 * (pCnf->nVars) + k;
+        assumption[k + 2] = (k == j) ? toLitCond(enable_var, 1) : toLitCond(enable_var, 0);
+      }
+
+      int pos_test = sat_solver_solve(pSat, assumption, assumption + Aig_ManCiNum(pMan) + 2, 0, 0, 0, 0);
+
+      //negative unate test
+      assumption[0] = toLitCond(fvar, 0);
+      assumption[1] = toLitCond(fneg_var, 1);
+
+      for (int k = 0; k < Aig_ManCiNum(pMan); ++k) {
+        int enable_var = 2 * (pCnf->nVars) + k;
+        assumption[k + 2] = (k == j) ? toLitCond(enable_var, 1) : toLitCond(enable_var, 0);
+      }
+
+      int neg_test = sat_solver_solve(pSat, assumption, assumption + Aig_ManCiNum(pMan) + 2, 0, 0, 0, 0);
+      
+      if (pos_test == l_False && neg_test == l_False) {
+        ;
+      }
+      else if (pos_test == l_False) {
+        name2unate[id2name[Aig_ObjId(Aig_pObj)]] = '+';
+        //cout << 'posunate' << endl;
+      }
+      else if (neg_test == l_False) {
+        name2unate[id2name[Aig_ObjId(Aig_pObj)]] = '-';
+        //cout << 'negunate' << endl;
+      }
+      else {
+        name2unate[id2name[Aig_ObjId(Aig_pObj)]] = 'b';
+        //cout << 'binate' << endl;
+      }
+    }
+
+    Abc_NtkForEachPi(pNtk, pObjPI, k)
+    {
+      if (name2unate.find(Abc_ObjName(pObjPI)) == name2unate.end()) {
+        pos_unate.push_back(pObjPI);
+        neg_unate.push_back(pObjPI);
+      }
+      else if (name2unate[Abc_ObjName(pObjPI)] == '+')
+        pos_unate.push_back(pObjPI);
+      else if (name2unate[Abc_ObjName(pObjPI)] == '-')
+        neg_unate.push_back(pObjPI);
+      else
+        binate.push_back(pObjPI);
+    }
+
+    sort(neg_unate.begin(), neg_unate.end(), object_id_compare);
+    sort(pos_unate.begin(), pos_unate.end(), object_id_compare);
+    sort(binate.begin(), binate.end(), object_id_compare);
+
+    //print
+    cout << "node " << Abc_ObjName(pObjPO) << ":" << endl;
+
+    print_unateness(pos_unate, neg_unate, binate);
+
+    pos_unate.clear();
+    neg_unate.clear();
+    binate.clear();
+    id2name.clear();
+    name2unate.clear();
+  }
+
+  return 0;
 }
